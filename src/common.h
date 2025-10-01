@@ -201,28 +201,65 @@ static uint64_t getHash(const char* string, size_t n) {
  * $(hostname)$(cat /proc/sys/kernel/random/boot_id)
  *
  */
+// #define HOSTID_FILE "/proc/sys/kernel/random/boot_id"
+// static uint64_t getHostHash(const char* hostname) {
+//   char hostHash[1024];
+
+//   // Fall back is the hostname if something fails
+//   (void) strncpy(hostHash, hostname, sizeof(hostHash));
+//   int offset = strlen(hostHash);
+
+//   FILE *file = fopen(HOSTID_FILE, "r");
+//   if (file != NULL) {
+//     char *p;
+//     if (fscanf(file, "%ms", &p) == 1) {
+//         strncpy(hostHash+offset, p, sizeof(hostHash)-offset-1);
+//         free(p);
+//     }
+//   }
+//   fclose(file);
+
+//   // Make sure the string is terminated
+//   hostHash[sizeof(hostHash)-1]='\0';
+
+//   return getHash(hostHash, strlen(hostHash));
+// }
+
 #define HOSTID_FILE "/proc/sys/kernel/random/boot_id"
 static uint64_t getHostHash(const char* hostname) {
   char hostHash[1024];
+  const char *hostId;
 
-  // Fall back is the hostname if something fails
-  (void) strncpy(hostHash, hostname, sizeof(hostHash));
+  // Fall back is the full hostname if something fails
+  getHostName(hostHash, sizeof(hostHash));
   int offset = strlen(hostHash);
 
-  FILE *file = fopen(HOSTID_FILE, "r");
-  if (file != NULL) {
-    char *p;
-    if (fscanf(file, "%ms", &p) == 1) {
+  if ((hostId = getenv("NCCL_HOSTID")) != NULL) {
+    strncpy(hostHash, hostId, sizeof(hostHash)-1);
+    hostHash[sizeof(hostHash)-1] = '\0';
+  } else {
+    FILE *file = fopen(HOSTID_FILE, "r");
+    if (file != NULL) {
+      char *p;
+      if (fscanf(file, "%ms", &p) == 1) {
         strncpy(hostHash+offset, p, sizeof(hostHash)-offset-1);
         free(p);
+      }
+      fclose(file);
     }
   }
-  fclose(file);
 
   // Make sure the string is terminated
   hostHash[sizeof(hostHash)-1]='\0';
 
-  return getHash(hostHash, strlen(hostHash));
+  // [NEX] no hash
+  uint64_t hostHashValue = getHash(hostHash, strlen(hostHash));
+
+  int nex_id = 0;
+  const char* nex_id_str = getenv("NEX_ID");
+  if (nex_id_str) nex_id = atoi(nex_id_str);
+  hostHashValue += nex_id;
+  return hostHashValue;
 }
 
 #define HAVE_BF16 0
