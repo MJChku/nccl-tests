@@ -12,16 +12,16 @@ cd "$SCRIPT_DIR"
 
 # Test configurations
 declare -A COLLECTIVES=(
-    ["alltoall"]="./build/alltoall_perf"
-    ["gather"]="./build/gather_perf"
-    ["hypercube"]="./build/hypercube_perf" 
+    # ["alltoall"]="./build/alltoall_perf"
+    # ["gather"]="./build/gather_perf"
+    # ["hypercube"]="./build/hypercube_perf" 
     ["sendrecv"]="./build/sendrecv_perf"
     ["all_gather"]="./build/all_gather_perf"
     ["reduce"]="./build/reduce_perf"
     ["reduce_scatter"]="./build/reduce_scatter_perf"
-    ["scatter"]="./build/scatter_perf"
-    ["all_reduce"]="./build/all_reduce_perf"
     ["broadcast"]="./build/broadcast_perf"
+    # ["scatter"]="./build/scatter_perf"
+    ["all_reduce"]="./build/all_reduce_perf"
 )
 
 # Size configurations (in bytes)
@@ -58,11 +58,9 @@ create_run_mk() {
     fi
     
     # Copy original run.mk and update TARGET_MPI_ONE and profile filenames
-    sed "s|^TARGET_MPI_ONE=.*|TARGET_MPI_ONE=${COLLECTIVES[$collective]} -b $size -e $size -g 1|" run.mk | \
-    sed "s|nccl_profile_rank0|${profile_prefix}0|g" | \
-    sed "s|nccl_profile_rank1|${profile_prefix}1|g" | \
-    sed "s|nccl_native_profile_r0|${profile_prefix}0|g" | \
-    sed "s|nccl_native_profile_r1|${profile_prefix}1|g" > "$temp_mk"
+    sed "s|^TARGET_MPI_ONE=.*|TARGET_MPI_ONE=${COLLECTIVES[$collective]} -b $size -e $size -g 1 -w 0 -n 1 |" run.mk | \
+    sed "s|nccl_sim_profile_r\$\$OMPI_COMM_WORLD_RANK|${profile_prefix}\$\$OMPI_COMM_WORLD_RANK|g" | \
+    sed "s|nccl_native_profile_r\$\$OMPI_COMM_WORLD_RANK|${profile_prefix}\$\$OMPI_COMM_WORLD_RANK|g" > "$temp_mk"
     
     echo "$temp_mk"
 }
@@ -131,6 +129,15 @@ run_test() {
     if [[ "$make_success" = true ]]; then
         # Copy the successful log to the main log file
         cp "$RESULTS_DIR/${collective}_${size}_${mode}_attempt"*.log "$RESULTS_DIR/${collective}_${size}_${mode}.log" 2>/dev/null || true
+        # Extract average bus bandwidth (GB/s) from the test log if present
+        local bus_bw=0
+        local main_log="$RESULTS_DIR/${collective}_${size}_${mode}.log"
+        if [[ -f "$main_log" ]]; then
+            bus_bw=$(grep -E "Avg bus bandwidth[[:space:]]*:[[:space:]]*[0-9]+(\.[0-9]+)?" "$main_log" 2>/dev/null | tail -n1 | sed -E 's/.*:[[:space:]]*([0-9.]+).*/\1/') || true
+            if [[ -z "$bus_bw" ]]; then
+                bus_bw=0
+            fi
+        fi
         local test_end=$(date +%s)
         local test_duration=$((test_end - test_start))
         log "Test completed in ${test_duration}s"
@@ -138,11 +145,11 @@ run_test() {
         # Find NCCL profile files created after test started
         local profile_files
         if [[ "$mode" == "emulated" ]]; then
-            # Look for both meaningful names and fallback to old naming pattern
-            profile_files=$(find . -maxdepth 1 \( -name "nccl_${collective}_${size}_${mode}_r*.json" -o -name "nccl_profile_rank*.json" \) -newer "$temp_mk" 2>/dev/null || true)
+            # Look for the new naming pattern with RANK variable
+            profile_files=$(find . -maxdepth 1 -name "nccl_${collective}_${size}_${mode}_r*.json" -newer "$temp_mk" 2>/dev/null || true)
         else
-            # Native mode
-            profile_files=$(find . -maxdepth 1 \( -name "nccl_${collective}_${size}_${mode}_r*.json" -o -name "nccl_native_profile_r*.json" \) -newer "$temp_mk" 2>/dev/null || true)
+            # Native mode - look for the new naming pattern
+            profile_files=$(find . -maxdepth 1 -name "nccl_${collective}_${size}_${mode}_r*.json" -newer "$temp_mk" 2>/dev/null || true)
         fi
         
         # Only use NCCL profiler files, ignore NEX kernel profiles
@@ -161,7 +168,7 @@ run_test() {
                     if python3 parse_nccl_profile.py "$profile_file" > "/tmp/parse_output.txt" 2>&1; then
                         # Extract average duration from the parsing output
                         local avg_duration
-                        avg_duration=$(grep "Duration - Min:" "/tmp/parse_output.txt" | sed -n 's/.*Avg: \([0-9.]*\)ms.*/\1/p')
+                        avg_duration=$(grep "Overall average kernel duration:" "/tmp/parse_output.txt" | sed -n 's/.*Overall average kernel duration: \([0-9.]*\)ms.*/\1/p')
                         
                         if [[ -n "$avg_duration" ]]; then
                             total_duration=$(echo "$total_duration + $avg_duration" | bc -l)
@@ -179,29 +186,42 @@ run_test() {
                 fi
             done
             
+            # Also copy any kernel_profile files generated during this test
+            local kernel_profiles
+            kernel_profiles=$(find . -maxdepth 1 -name "kernel_profile_*.json" -newer "$temp_mk" 2>/dev/null || true)
+            if [[ -n "$kernel_profiles" ]]; then
+                for kernel_file in $kernel_profiles; do
+                    if [[ -f "$kernel_file" ]]; then
+                        local kernel_new_name="${collective}_${size}_${mode}_$(basename "$kernel_file")"
+                        cp "$kernel_file" "$RESULTS_DIR/$kernel_new_name"
+                        log "Saved kernel profile as: $kernel_new_name"
+                    fi
+                done
+            fi
+            
             # Calculate average across all profiles
             local final_avg_duration=0
             if [[ $kernel_count -gt 0 ]]; then
                 final_avg_duration=$(echo "scale=6; $total_duration / $kernel_count" | bc -l)
             fi
             
-            # Record result in simple format (no CSV)
-            echo "$collective,$size,$mode,$final_avg_duration,$kernel_count,$test_duration" >> "$RESULTS_DIR/simple_results.txt"
+            # Record result in simple format (no CSV). Append avg bus bandwidth (GB/s).
+            echo "$collective,$size,$mode,$final_avg_duration,$kernel_count,$test_duration,$bus_bw" >> "$RESULTS_DIR/simple_results.txt"
             log "Average kernel duration: ${final_avg_duration}ms (from $kernel_count profiles)"
         else
             log "Warning: No profile files found for $collective $size $mode"
-            echo "$collective,$size,$mode,0,0,$test_duration" >> "$RESULTS_DIR/simple_results.txt"
+            echo "$collective,$size,$mode,0,0,$test_duration,$bus_bw" >> "$RESULTS_DIR/simple_results.txt"
         fi
     else
         log "Error: Test failed permanently for $collective $size $mode after $max_retries attempts"
-        echo "$collective,$size,$mode,ERROR,0,300" >> "$RESULTS_DIR/simple_results.txt"
+        echo "$collective,$size,$mode,ERROR,0,300,0" >> "$RESULTS_DIR/simple_results.txt"
     fi
     
     # Cleanup
     rm -f "$temp_mk"
     rm -f /tmp/parse_output.txt
     # Clean up attempt logs (keep only the main log)
-    rm -f "$RESULTS_DIR/${collective}_${size}_${mode}_attempt"*.log
+    # rm -f "$RESULTS_DIR/${collective}_${size}_${mode}_attempt"*.log
 }
 
 # Function to get sizes for a collective
@@ -234,8 +254,8 @@ main() {
         echo "gpu_freq_locked=not_available" >> "$RESULTS_DIR/benchmark_config.txt"
     fi
     
-    # Initialize simple results file header
-    echo "collective,size,mode,avg_kernel_duration_ms,profile_count,test_duration_s" > "$RESULTS_DIR/simple_results.txt"
+    # Initialize simple results file header (added avg_bus_bandwidth_gbps)
+    echo "collective,size,mode,avg_kernel_duration_ms,profile_count,test_duration_s,avg_bus_bandwidth_gbps" > "$RESULTS_DIR/simple_results.txt"
     
     # Check if parse_nccl_profile.py exists
     if [[ ! -f "parse_nccl_profile.py" ]]; then
@@ -263,8 +283,8 @@ main() {
             # Run emulated version
             run_test "$collective" "$size" "emulated"
             
-            # Run native version
-            run_test "$collective" "$size" "native"
+            # # Run native version
+            # run_test "$collective" "$size" "native"
             
             # Brief pause between tests
             sleep 2
@@ -305,16 +325,57 @@ generate_summary_report() {
             echo
             echo "Collective: $collective"
             echo "------------------------"
-            
-            # Extract results for this collective
+
             if [[ -f "$RESULTS_DIR/simple_results.txt" ]]; then
-                grep "^$collective," "$RESULTS_DIR/simple_results.txt" | while IFS=',' read -r coll size mode duration profiles test_time; do
-                    if [[ "$duration" != "ERROR" && "$duration" != "0" ]]; then
-                        printf "  %-8s %-8s: %8.3f ms (%d profiles, %ds test)\n" "$size" "$mode" "$duration" "$profiles" "$test_time"
+                # Read all matching lines into an array so we can compute averages
+                mapfile -t coll_lines < <(grep "^$collective," "$RESULTS_DIR/simple_results.txt" || true)
+                local sum_bw=0
+                local bw_count=0
+                if [[ ${#coll_lines[@]} -eq 0 ]]; then
+                    echo "  No results for $collective"
+                else
+                    for line in "${coll_lines[@]}"; do
+                        IFS=',' read -r coll size mode duration profiles test_time bus_bw <<< "$line"
+                        if [[ "$duration" != "ERROR" && "$duration" != "0" ]]; then
+                            printf "  %-8s %-8s: %8.3f ms (%d profiles, %ds test) | Avg bus bw: %s GB/s\n" "$size" "$mode" "$duration" "$profiles" "$test_time" "$bus_bw"
+                        else
+                            printf "  %-8s %-8s: %s\n" "$size" "$mode" "$duration"
+                        fi
+                        if [[ -n "$bus_bw" && "$bus_bw" != "0" ]]; then
+                            sum_bw=$(echo "$sum_bw + $bus_bw" | bc -l)
+                            bw_count=$((bw_count+1))
+                        fi
+                    done
+                    if [[ $bw_count -gt 0 ]]; then
+                        avg_bw=$(echo "scale=3; $sum_bw / $bw_count" | bc -l)
+                        echo "  Average bus bandwidth for $collective: ${avg_bw} GB/s (from $bw_count runs)"
+                    else
+                        echo "  Average bus bandwidth for $collective: N/A"
                     fi
-                done
+                fi
+            else
+                echo "  No results file found"
             fi
         done
+
+        # Compute overall average bus bandwidth across all runs (if any)
+        if [[ -f "$RESULTS_DIR/simple_results.txt" ]]; then
+            mapfile -t all_lines < <(tail -n +2 "$RESULTS_DIR/simple_results.txt" || true)
+            total_bw=0
+            total_count=0
+            for l in "${all_lines[@]}"; do
+                IFS=',' read -r _coll _size _mode _dur _prof _t bus <<< "$l"
+                if [[ -n "$bus" && "$bus" != "0" ]]; then
+                    total_bw=$(echo "$total_bw + $bus" | bc -l)
+                    total_count=$((total_count+1))
+                fi
+            done
+            if [[ $total_count -gt 0 ]]; then
+                overall_avg_bw=$(echo "scale=3; $total_bw / $total_count" | bc -l)
+                echo
+                echo "Overall average bus bandwidth across all benchmarks: ${overall_avg_bw} GB/s (from $total_count runs)"
+            fi
+        fi
         
         echo
         echo "Detailed results available in: $RESULTS_DIR/simple_results.txt"

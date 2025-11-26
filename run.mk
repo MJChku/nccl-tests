@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #  make MPI=1  MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi -B -j
-# make MPI=1 MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi -B -j
+# make MPI=1 MPI_HOME=/home/jiacma/openmpi5/lib/openmpi -B -j
 
 # PRELOAD_LIB="/home/jma/NEX/src/sims/gpu/nex_cuda.so"
 PROJECT_DIR := "/home/jiacma/nex-dist"
@@ -9,16 +9,16 @@ PROJECT_DIR := "/home/jiacma/nex-dist"
 # failed
 
 #success:
-TARGET_MPI_ONE=./build/alltoall_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/gather_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/hypercube_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/sendrecv_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/reduce_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/reduce_scatter_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/scatter_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/all_reduce_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/broadcast_perf -b 4MB -e 4MB -g 1
-TARGET_MPI_ONE=./build/all_gather_perf -b 4MB -e 4MB -g 1
+TARGET_MPI_ONE=./build/alltoall_perf -b 1G -e 1G -g 1 -w 0 -n 1
+TARGET_MPI_ONE=./build/hypercube_perf -b 1G -e 1G -g 1 -w 0 -n 1
+TARGET_MPI_ONE=./build/sendrecv_perf -b 32MB -e 32MB -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/reduce_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/reduce_scatter_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/all_reduce_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/all_gather_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/broadcast_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/gather_perf -b 1G -e 1G -g 1 -w 0 -n 1
+# TARGET_MPI_ONE=./build/scatter_perf -b 1GB -e 1GB -g 1 -w 0 -n 1
 
 # TARGET_MPI_ONE=ifconfig
 
@@ -41,30 +41,54 @@ IB_LIB_PATH="/home/jiacma/nex-dist/src/sims/ib/rdma-core/build/lib"
 # LD_PRELOAD=$(PROJECT_DIR)/src/accvm.so:$(PROJECT_DIR)/src/sims/gpu/nex_cuda.so 
 UBSAN=$(shell clang -print-file-name=libclang_rt.ubsan_standalone-x86_64.so)
 
+NEX := /home/jiacma/nex-dist/nex
+
 MPI_ENV := \
-  NCCL_PROFILE_EVENT_MASK=64 \
-  LD_LIBRARY_PATH="$(IB_LIB_PATH):$(PROJECT_DIR)/nccl/build/lib" \
-  NCCL_DEBUG=WARN NCCL_DEBUG_SUBSYS=ALL NCCL_CROSS_NIC=0 \
+  NCCL_PROFILE_EVENT_MASK=255 \
+  LD_PRELOAD=/home/jiacma/nex-dist/nccl/ext-profiler/example/libnccl-profiler.so \
+  LD_LIBRARY_PATH="$(IB_LIB_PATH):$(PROJECT_DIR)/nccl/build/lib:$(LD_LIBRARY_PATH)" \
+  NCCL_DEBUG=ERROR NCCL_DEBUG_SUBSYS=ALL NCCL_CROSS_NIC=1 \
   NCCL_OOB_NET_ENABLE=0 \
-  NCCL_P2P_DISABLE=1 NCCL_CUMEM_ENABLE=0 NCCL_CUMEM_HOST_ENABLE=1 \
+  NCCL_GRAPH_MIXING_SUPPORT=0 \
+  NCCL_P2P_DISABLE=1 NCCL_CUMEM_ENABLE=0 NCCL_CUMEM_HOST_ENABLE=0 \
   NCCL_P2P_LEVEL=LOC NCCL_COLLNET_ENABLE=0 NCCL_P2P_DIRECT_DISABLE=1 \
-  NCCL_MAX_NCHANNELS=1 NCCL_SHM_DISABLE=1 NCCL_NVLS_ENABLE=0 \
+  NCCL_MAX_NCHANNELS=2 NCCL_SHM_DISABLE=1 NCCL_NVLS_ENABLE=0 \
   NCCL_NET_SHARED_BUFFERS=0 \
   NCCL_RAS_ENABLE=0 NCCL_PROTO="Simple"  NCCL_GDR_FLUSH_DISABLE=1 \
-  NCCL_IB_DISABLE=0 NCCL_NET="Socket" NCCL_IB_HCA=nex0 \
-  NCCL_TOPO_FILE=$(CURDIR)/topo_tap_nccl.xml  \
+  NCCL_IB_DISABLE=0 NCCL_NET="IB" NCCL_IB_HCA=nex0 \
+  NCCL_TOPO_FILE=$(CURDIR)/topo_tap_nccl.xml NCCL_SOCKET_IFNAME=tap-nccl-0 \
+  
+#   NCCL_P2P_NET_CHUNKSIZE=8388608 \
+  
+  
+#   NCCL_DEBUG=TRACE NCCL_DEBUG_SUBSYS=ALL NCCL_CROSS_NIC=0 \
+#   NCCL_GRAPH_MIXING_SUPPORT=0 \
+#   NCCL_OOB_NET_ENABLE=0 \
+#   NCCL_P2P_DISABLE=1 NCCL_CUMEM_ENABLE=0 NCCL_CUMEM_HOST_ENABLE=0 \
+#   NCCL_P2P_LEVEL=LOC NCCL_COLLNET_ENABLE=0 NCCL_P2P_DIRECT_DISABLE=1 \
+#   NCCL_MAX_NCHANNELS=1 NCCL_SHM_DISABLE=1 NCCL_NVLS_ENABLE=0 \
+#   NCCL_NET_SHARED_BUFFERS=0 \
+#   NCCL_RAS_ENABLE=0 NCCL_PROTO="Simple"  NCCL_GDR_FLUSH_DISABLE=1 \
+#   NCCL_IB_DISABLE=0 NCCL_NET="Socket" NCCL_IB_HCA=nex0 \
+#   NCCL_TOPO_FILE=$(CURDIR)/topo_tap_nccl.xml NCCL_SOCKET_IFNAME=tap-nccl-0
 
 # run under gdb
 COMMAND := 'PORT=$$((12340 + $$OMPI_COMM_WORLD_RANK)); \
             echo "Rank $$OMPI_COMM_WORLD_RANK listening on port $$PORT"; \
             exec gdbserver :$$PORT ./$(TARGET_MPI_ONE)'
 
+# this line is wrong
+# PORT=$$((12340 + $$OMPI_COMM_WORLD_RANK));\
+
 COMMAND := '\
 export NEX_ID=$$OMPI_COMM_WORLD_RANK; \
+export NCCL_PROFILE_DUMP_FILE=$(CURDIR)/nccl_sim_profile_r$$OMPI_COMM_WORLD_RANK; \
 echo $$NEX_ID;\
 export NCCL_HOSTID=$${NEX_ID}3ac85d495be0; \
 echo $$NCCL_HOSTID; \
-nex ./$(TARGET_MPI_ONE)'
+/home/jiacma/nex-dist/nex ./$(TARGET_MPI_ONE)'
+
+# exec gdbserver :$$PORT $(NEX) ./$(TARGET_MPI_ONE)'
 
 # export NCCL_HOSTID=${NEX_ID}3ac85d495be0; \
 # nex ./$(TARGET_MPI_ONE)'
@@ -83,17 +107,24 @@ run:
 	@echo "Running MPI OneDevicePerProcess test"
 	@echo "Output will be written to mpi-one-rank-*.out files"
 	@echo "rm shm files in /dev/shm/*:*"
-	@rm -f /dev/shm/*:*
-	@rm -f /dev/shm/nex_qpcnt*
+	@rm -rf mpi-one-rank*
+	@sudo rm -f /dev/shm/*:*
+	@sudo rm -f /dev/shm/nex_qpcnt*
+	@rm -rf nccl_sim_profile*
+	@rm -rf kernel_profile*
 	$(MPI_ENV) \
-	mpirun --hostfile hosts --output-filename mpi-one-rank \
-	-np 4 -N 1 \
+	mpirun --hostfile hosts \
+	--mca plm_rsh_no_tree_spawn 1 \
+	--mca plm_rsh_num_concurrent 1 \
+	--mca orte_startup_timeout 10 \
+	--mca routed direct \
+	--output-filename mpi-one-rank \
+	-np 2 -N 1 \
+	-x LD_PRELOAD \
 	-x NCCL_PROFILE_EVENT_MASK \
 	-x NCCL_CUMEM_ENABLE \
 	-x NCCL_CUMEM_HOST_ENABLE \
 		-x LD_LIBRARY_PATH \
-		-x LD_PRELOAD \
-		-x REPLACE_LIB \
 		-x NCCL_DEBUG \
 		-x NCCL_DEBUG_SUBSYS \
 		-x NCCL_CROSS_NIC \
@@ -113,13 +144,14 @@ run:
 		-x NCCL_PROTO \
 		-x NEX_DEBUG=1 \
 		-x NCCL_GDR_FLUSH_DISABLE \
-		-x NCCL_SOCKET_IFNAME=tap-nccl-0 \
+		-x NCCL_SOCKET_IFNAME \
+		-x NCCL_P2P_NET_CHUNKSIZE \
 	   bash -lc $(COMMAND) \
 
 MPI_ENV_NATIVE := \
   LD_LIBRARY_PATH="/home/jma/nccl/build/lib" \
   LD_PRELOAD=/home/jma/nccl/ext-profiler/example/libnccl-profiler.so \
-  NCCL_PROFILE_EVENT_MASK=64 \
+  NCCL_PROFILE_EVENT_MASK=255 \
   NCCL_DEBUG=ERROR NCCL_DEBUG_SUBSYS=ALL NCCL_CROSS_NIC=1 \
   NCCL_OOB_NET_ENABLE=0 \
   NCCL_P2P_DISABLE=1 NCCL_CUMEM_ENABLE=0 NCCL_CUMEM_HOST_ENABLE=1 \

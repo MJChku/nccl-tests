@@ -776,15 +776,15 @@ testResult_t threadLaunch(struct testThread* thread) {
 }
 
 testResult_t AllocateBuffs(void **sendbuff, size_t sendBytes, void **recvbuff, size_t recvBytes, void **expected, size_t nbytes) {
-#if NCCL_VERSION_CODE >= NCCL_VERSION(2,19,0)
-    NCCLCHECK(ncclMemAlloc(sendbuff, nbytes));
-    NCCLCHECK(ncclMemAlloc(recvbuff, nbytes));
-    if (datacheck) NCCLCHECK(ncclMemAlloc(expected, recvBytes));
-#else
+// #if NCCL_VERSION_CODE >= NCCL_VERSION(2,19,0)
+//     NCCLCHECK(ncclMemAlloc(sendbuff, nbytes));
+//     NCCLCHECK(ncclMemAlloc(recvbuff, nbytes));
+//     if (datacheck) NCCLCHECK(ncclMemAlloc(expected, recvBytes));
+// #else
     CUDACHECK(cudaMalloc(sendbuff, nbytes));
     CUDACHECK(cudaMalloc(recvbuff, nbytes));
     if (datacheck) CUDACHECK(cudaMalloc(expected, recvBytes));
-#endif
+// #endif
     return testSuccess;
 }
 
