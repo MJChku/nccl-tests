@@ -1078,15 +1078,23 @@ testResult_t run() {
   getHostName(hostname, 1024);
 
 #ifdef MPI_SUPPORT
+  printf("# Using MPI for process management\n");
   MPI_Comm_size(MPI_COMM_WORLD, &totalProcs);
   MPI_Comm_rank(MPI_COMM_WORLD, &proc);
   uint64_t hostHashs[totalProcs];
   hostHashs[proc] = getHostHash(hostname);
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, hostHashs, sizeof(uint64_t), MPI_BYTE, MPI_COMM_WORLD);
+  
   for (int p=0; p<totalProcs; p++) {
     if (p == proc) break;
     if (hostHashs[p] == hostHashs[proc]) localRank++;
   }
+
+  for (int p=0; p<totalProcs; p++) {
+    printf("# Process %d has hostHash 0x%016lx\n", p, hostHashs[p]);
+  }
+
+  printf("# Process %d/%d on %s localRank %d\n", proc, totalProcs, hostname, localRank);
 
   char *splitMaskEnv = NULL;
   if (splitMaskEnv = getenv("NCCL_TESTS_SPLIT_MASK")) {
@@ -1115,9 +1123,13 @@ testResult_t run() {
   }
 
   MPI_Comm mpi_comm;
+  printf("# MPI_Comm_split with color %d\n", color);
   MPI_Comm_split(MPI_COMM_WORLD, color, proc, &mpi_comm);
+  printf("# MPI_Comm_split done\n");
   MPI_Comm_size(mpi_comm, &ncclProcs);
+  printf("# MPI_Comm_size returned %d\n", ncclProcs);
   MPI_Comm_rank(mpi_comm, &ncclProc);
+  printf("# NCCL Communicator %d/%d color %d\n", ncclProc, ncclProcs, color);
 #endif
   is_main_thread = is_main_proc = (proc == 0) ? 1 : 0;
 
